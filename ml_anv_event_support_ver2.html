@@ -1,0 +1,1553 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ミリシタ 周年イベラン支援ツール Pro</title>
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Noto+Sans+JP:wght@400;500;700;950&display=swap" rel="stylesheet font-display-swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body { 
+            font-family: 'Noto Sans JP', 'JetBrains Mono', sans-serif; 
+            background-color: #080c14; 
+            color: #f8fafc; 
+        }
+        .glass-panel { 
+            background: rgba(15, 23, 42, 0.85); 
+            backdrop-filter: blur(16px); 
+            border: 1px solid rgba(255, 255, 255, 0.06); 
+        }
+        .neon-border-orange { border: 1px solid rgba(249, 115, 22, 0.3); box-shadow: 0 0 15px rgba(249, 115, 22, 0.1); }
+        .neon-border-cyan { border: 1px solid rgba(6, 182, 212, 0.3); box-shadow: 0 0 15px rgba(6, 182, 212, 0.1); }
+        .neon-border-pink { border: 1px solid rgba(236, 72, 153, 0.3); box-shadow: 0 0 15px rgba(236, 72, 153, 0.1); }
+        .progress-bar-stripes { 
+            background-image: linear-gradient(45deg, rgba(255, 255, 255, 0.15) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.15) 75%, transparent 75%, transparent); 
+            background-size: 1rem 1rem; 
+            animation: progress-stripes 1s linear infinite; 
+        }
+        @keyframes progress-stripes { 
+            from { background-position: 1rem 0; } 
+            to { background-position: 0 0; } 
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // 2026年想定イベント期間設定
+        const EVENT_START = new Date('2026-06-30T00:00:00+09:00').getTime();
+        const HALFWAY_END = new Date('2026-07-06T23:59:59+09:00').getTime();
+        const EVENT_END = new Date('2026-07-12T23:59:59+09:00').getTime();
+
+        // ユーザーがマニュアル割当可能な稼働モード
+        const MODES = {
+            MANUAL: { label: "手動周回", color: "bg-emerald-500", border: "border-emerald-500/30", text: "text-emerald-400", desc: "集中プレイ（最速）" },
+            AUTO: { label: "完全オート", color: "bg-cyan-500", border: "border-cyan-500/30", text: "text-cyan-400", desc: "お仕事・裏作業用" },
+            NONE: { label: "稼働不可", color: "bg-slate-700", border: "border-slate-700/30", text: "text-slate-400", desc: "睡眠・離席" },
+            REFRESH: { label: "リフレッシュ", color: "bg-purple-600", border: "border-purple-600/30", text: "text-purple-400", desc: "1日8時間・自動オーバーレイ" }
+        };
+
+        // ビジュアル用アクション定義
+        const ACTIONS = {
+            WORK_TOKEN_M: { label: "手動貯め", color: "bg-emerald-500", text: "text-emerald-100", icon: "fa-solid fa-gem" },
+            WORK_TOKEN_A: { label: "オート貯め", color: "bg-cyan-500", text: "text-cyan-100", icon: "fa-solid fa-robot" },
+            EVENT_PLAY_M: { label: "手動吐き", color: "bg-pink-500", text: "text-pink-100", icon: "fa-solid fa-fire" },
+            EVENT_PLAY_A: { label: "オート吐き", color: "bg-purple-500", text: "text-purple-100", icon: "fa-solid fa-spinner" },
+            EVENT_SKIP_M: { label: "手動スキップ", color: "bg-fuchsia-500", text: "text-fuchsia-100", icon: "fa-solid fa-bolt" },
+            EVENT_SKIP_A: { label: "オートスキップ", color: "bg-indigo-500", text: "text-indigo-100", icon: "fa-solid fa-bolt-lightning" },
+            REFRESH: { label: "リフレッシュ", color: "bg-slate-800", text: "text-slate-400", icon: "fa-solid fa-bed" },
+            NONE: { label: "稼働不可", color: "bg-rose-950/40", text: "text-rose-400", icon: "fa-solid fa-ban" },
+            IDLE: { label: "待機・調整", color: "bg-slate-900", text: "text-slate-500", icon: "fa-solid fa-hourglass" }
+        };
+
+        // 初期スケジュール生成
+        const createDefaultBaseSchedule = () => {
+            const dayBlocks = Array(24).fill(null).map((_, h) => {
+                if (h >= 0 && h < 8) return 'NONE'; // リフレッシュ以外の初期睡眠候補
+                if (h >= 9 && h < 17) return 'AUTO'; // 仕事想定
+                return 'MANUAL'; // 稼働可能
+            });
+            return Array(13).fill(null).map(() => [...dayBlocks]);
+        };
+
+        const App = () => {
+            const [timeSource, setTimeSource] = useState('REAL'); // 'REAL' or 'VIRTUAL'
+            const [virtualTime, setVirtualTime] = useState(EVENT_START);
+            const [currentTime, setCurrentTime] = useState(Date.now());
+            const [alert, setAlert] = useState(null);
+
+            // インベントリ/所持品情報 (全フィールド自由入力のために文字列・空欄を許容)
+            const [inventory, setInventory] = useState(() => {
+                const saved = localStorage.getItem('ml_runner_inventory_v9');
+                return saved ? JSON.parse(saved) : {
+                    trigger: "4000",
+                    currentPt: "0",
+                    skipFree: "6",       // 当日限りの無償スキップ
+                    skipEvent: "420",    // イベント限定スキップ
+                    boost: "1",          // ブーストアイテム保有数 (Max 2)
+                    isPremiumPass: true // プレミアムパスDX+購入（無償スキップ1日6枚配布）
+                };
+            });
+
+            // ラップタイム設定 (秒単位、自由入力のために文字列・空欄を許容)
+            const [lapTimes, setLapTimes] = useState(() => {
+                const saved = localStorage.getItem('ml_runner_laptimes_v9');
+                return saved ? JSON.parse(saved) : {
+                    work_manual: "120",          // 前半お仕事30回(手動)
+                    work_auto: "150",            // 前半お仕事30回(オート)
+                    token_manual: "145",         // 当日曲(手動)
+                    token_auto: "150",           // 当日曲(オート)
+                    event_manual: "150",         // イベント曲(手動)
+                    event_auto: "155",           // イベント曲(オート)
+                    event_skip_manual: "10",     // スキップ手動
+                    event_skip_auto: "15"        // スキップオート
+                };
+            });
+
+            // 当日曲の時間 (Day1〜Day13、秒数、自由入力のために文字列・空欄を許容)
+            const [daySongTimes, setDaySongTimes] = useState(() => {
+                const saved = localStorage.getItem('ml_runner_day_song_times_v9');
+                const defaultTimes = ["165", "140", "155", "170", "135", "160", "150", "155", "160", "142", "150", "165", "155"];
+                return saved ? JSON.parse(saved) : defaultTimes;
+            });
+
+            // ベーススケジュール
+            const [baseSchedule, setBaseSchedule] = useState(() => {
+                const saved = localStorage.getItem('ml_runner_base_schedule_v9');
+                return saved ? JSON.parse(saved) : createDefaultBaseSchedule();
+            });
+
+            // リフレッシュ開始時刻 (Day1〜Day13、0〜23、または'NONE'。Day13はデフォルトNONE)
+            const [refreshStarts, setRefreshStarts] = useState(() => {
+                const saved = localStorage.getItem('ml_runner_refresh_starts_v9');
+                const defaultStarts = Array(13).fill(null).map((_, idx) => idx === 12 ? 'NONE' : '17'); // 17時日付跨ぎ推奨
+                return saved ? JSON.parse(saved) : defaultStarts;
+            });
+
+            const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+            const [optimizationTarget, setOptimizationTarget] = useState('AUTO');
+
+            // 計測セクション用ステート
+            const [setTracking, setSetTracking] = useState({
+                state: 'IDLE',
+                workStart: null,
+                tokenStart: null,
+                elapsedWork: null
+            });
+
+            const [eventTracking, setEventTracking] = useState({
+                state: 'IDLE',
+                startTime: null,
+                isManual: true
+            });
+
+            // 仮想時刻と現実時刻の同期管理
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    if (timeSource === 'REAL') {
+                        setCurrentTime(Date.now());
+                    } else {
+                        setCurrentTime(virtualTime);
+                    }
+                }, 1000);
+                return () => clearInterval(timer);
+            }, [timeSource, virtualTime]);
+
+            // 自動保存
+            useEffect(() => {
+                localStorage.setItem('ml_runner_inventory_v9', JSON.stringify(inventory));
+            }, [inventory]);
+
+            useEffect(() => {
+                localStorage.setItem('ml_runner_laptimes_v9', JSON.stringify(lapTimes));
+            }, [lapTimes]);
+
+            useEffect(() => {
+                localStorage.setItem('ml_runner_base_schedule_v9', JSON.stringify(baseSchedule));
+            }, [baseSchedule]);
+
+            useEffect(() => {
+                localStorage.setItem('ml_runner_refresh_starts_v9', JSON.stringify(refreshStarts));
+            }, [refreshStarts]);
+
+            useEffect(() => {
+                localStorage.setItem('ml_runner_day_song_times_v9', JSON.stringify(daySongTimes));
+            }, [daySongTimes]);
+
+            // アラート自動消去
+            useEffect(() => {
+                if (alert) {
+                    const t = setTimeout(() => setAlert(null), 4000);
+                    return () => clearTimeout(t);
+                }
+            }, [alert]);
+
+            // アクティブな現在時刻
+            const activeTime = timeSource === 'REAL' ? currentTime : virtualTime;
+
+            // 後半戦判定
+            const isSecondHalf = activeTime > HALFWAY_END;
+            
+            // 最適化の最終ターゲット時刻
+            const targetTime = optimizationTarget === 'AUTO' 
+                ? (isSecondHalf ? EVENT_END : HALFWAY_END)
+                : (optimizationTarget === 'HALFWAY' ? HALFWAY_END : EVENT_END);
+
+            const targetName = targetTime === HALFWAY_END ? "前半戦終了 (Day6)" : "最終終了 (Day13)";
+
+            // イベント全体進捗
+            const calculateProgress = () => {
+                const total = EVENT_END - EVENT_START;
+                const elapsed = activeTime - EVENT_START;
+                if (elapsed < 0) return 0;
+                if (elapsed > total) return 100;
+                return ((elapsed / total) * 100).toFixed(2);
+            };
+
+            const triggerAlert = (type, text) => {
+                setAlert({ type, text });
+            };
+
+            // ユーザー自由入力のために、onChangeでは値を直接（文字列・空文字のまま）格納
+            const handleInventoryChange = (key, value) => {
+                setInventory(prev => ({ ...prev, [key]: value }));
+            };
+
+            const handleLapTimeChange = (key, value) => {
+                setLapTimes(prev => ({ ...prev, [key]: value }));
+            };
+
+            const handleDaySongTimeChange = (idx, value) => {
+                setDaySongTimes(prev => {
+                    const next = [...prev];
+                    next[idx] = value;
+                    return next;
+                });
+            };
+
+            // ベーススケジュール更新
+            const handleBlockChange = (dayIdx, hourIdx, value) => {
+                setBaseSchedule(prev => {
+                    return prev.map((dayArr, dIdx) => {
+                        if (dIdx !== dayIdx) return dayArr;
+                        return dayArr.map((currMode, hIdx) => {
+                            if (hIdx !== hourIdx) return currMode;
+                            return value;
+                        });
+                    });
+                });
+            };
+
+            const handleBulkSetDay = (dayIdx, modeKey) => {
+                setBaseSchedule(prev => {
+                    return prev.map((dayArr, dIdx) => {
+                        if (dIdx !== dayIdx) return dayArr;
+                        return dayArr.map((curr, hIdx) => {
+                            const blockStart = EVENT_START + dIdx * 24 * 3600 * 1000 + hIdx * 3600 * 1000;
+                            const blockEnd = blockStart + 3600 * 1000;
+                            if (blockEnd <= activeTime) return curr; // 過去は変更不可
+                            return modeKey;
+                        });
+                    });
+                });
+            };
+
+            // refreshStarts(開始時間)をbaseScheduleに自動で8時間上書き・合成して最終的な実働スケジュール配列を生成する関数
+            const getActiveSchedule = () => {
+                let active = baseSchedule.map(dayArr => [...dayArr]);
+                
+                for (let d = 0; d < 13; d++) {
+                    const startVal = refreshStarts[d];
+                    if (startVal !== 'NONE') {
+                        const startHour = Number(startVal);
+                        for (let i = 0; i < 8; i++) {
+                            const targetHour = startHour + i;
+                            if (targetHour < 24) {
+                                active[d][targetHour] = 'REFRESH';
+                            } else {
+                                // 日を跨ぐ場合は、翌日（上限Day13）の該当時間帯を上書き
+                                const nextDayIdx = d + 1;
+                                if (nextDayIdx < 13) {
+                                    active[nextDayIdx][targetHour - 24] = 'REFRESH';
+                                }
+                            }
+                        }
+                    }
+                }
+                return active;
+            };
+
+            const schedule = getActiveSchedule();
+
+            // リフレッシュ開始時間の変更ハンドラー
+            const handleRefreshStartChange = (dayIdx, value) => {
+                setRefreshStarts(prev => {
+                    const next = [...prev];
+                    next[dayIdx] = value;
+                    return next;
+                });
+                triggerAlert('success', `📅 Day ${dayIdx + 1} のリフレッシュ開始を ${value === 'NONE' ? 'なし' : value + ':00'}（8時間自動フィル）に設定しました。`);
+            };
+
+            // セットラップ計測：お仕事から当日曲まで自動遷移してラップを決定
+            const startSetTracking = (isManual) => {
+                setSetTracking({
+                    state: isManual ? 'WORKING_M' : 'WORKING_A',
+                    workStart: Date.now(),
+                    tokenStart: null,
+                    elapsedWork: null
+                });
+                triggerAlert('success', `⏱️ セット計測開始: お仕事周回中...`);
+            };
+
+            const transitToToken = () => {
+                const now = Date.now();
+                const elapsedSec = Math.floor((now - setTracking.workStart) / 1000);
+                setSetTracking(prev => ({
+                    ...prev,
+                    state: prev.state === 'WORKING_M' ? 'PLAYING_M' : 'PLAYING_A',
+                    tokenStart: now,
+                    elapsedWork: elapsedSec
+                }));
+                triggerAlert('success', `⏱️ お仕事完了(${elapsedSec}秒) ➔ 当日曲を開始してください！`);
+            };
+
+            const finishSetTracking = () => {
+                const now = Date.now();
+                const elapsedTokenSec = Math.floor((now - setTracking.tokenStart) / 1000);
+                const isManual = setTracking.state === 'PLAYING_M';
+
+                // 後半戦なら必要お仕事回数は20回(1.0倍)、前半戦なら30回(1.5倍)としてスケール換算
+                const scale = isSecondHalf ? 1.0 : 1.5;
+                const workLimitMin = 60 * scale;
+                const workLimitMax = 300 * scale;
+
+                const isWorkValid = setTracking.elapsedWork >= workLimitMin && setTracking.elapsedWork <= workLimitMax;
+                const isTokenValid = elapsedTokenSec >= 30 && elapsedTokenSec <= 300;
+
+                if (isWorkValid && isTokenValid) {
+                    setLapTimes(prev => ({
+                        ...prev,
+                        [isManual ? 'work_manual' : 'work_auto']: String(setTracking.elapsedWork),
+                        [isManual ? 'token_manual' : 'token_auto']: String(elapsedTokenSec)
+                    }));
+                    triggerAlert('success', `⏱️ お仕事: ${setTracking.elapsedWork}秒, 当日曲: ${elapsedTokenSec}秒 でラップを更新しました！`);
+                } else {
+                    triggerAlert('error', `⚠️ 計測値が想定外のため除外。お仕事:${setTracking.elapsedWork}s, 当日曲:${elapsedTokenSec}s`);
+                }
+
+                setSetTracking({ state: 'IDLE', workStart: null, tokenStart: null, elapsedWork: null });
+            };
+
+            // イベント曲単発計測
+            const startEventTracking = (isSkip, isManual) => {
+                setEventTracking({
+                    state: isSkip ? 'SKIPPING' : 'PLAYING',
+                    startTime: Date.now(),
+                    isManual
+                });
+                triggerAlert('success', `⏱️ イベント曲計測を開始しました...`);
+            };
+
+            const finishEventTracking = () => {
+                const now = Date.now();
+                const elapsedSec = Math.floor((now - eventTracking.startTime) / 1000);
+                const isSkip = eventTracking.state === 'SKIPPING';
+                const isManual = eventTracking.isManual;
+
+                const minLimit = isSkip ? 5 : 90;
+                const maxLimit = isSkip ? 240 : 240;
+
+                if (elapsedSec >= minLimit && elapsedSec <= maxLimit) {
+                    const key = isSkip 
+                        ? (isManual ? 'event_skip_manual' : 'event_skip_auto')
+                        : (isManual ? 'event_manual' : 'event_auto');
+                    setLapTimes(prev => ({ ...prev, [key]: String(elapsedSec) }));
+                    triggerAlert('success', `⏱️ イベント曲ラップ更新: ${elapsedSec}秒`);
+                } else {
+                    triggerAlert('error', `⚠️ 異常な秒数(${elapsedSec}秒)のため登録をスキップしました`);
+                }
+                setEventTracking({ state: 'IDLE', startTime: null, isManual: true });
+            };
+
+            const cancelTracking = () => {
+                setSetTracking({ state: 'IDLE', workStart: null, tokenStart: null, elapsedWork: null });
+                setEventTracking({ state: 'IDLE', startTime: null, isManual: true });
+                triggerAlert('error', '❌ 計測をキャンセルしました');
+            };
+
+            // ==================== 超高性能イベランシミュレーションエンジン ====================
+            const runSimulation = () => {
+                // 文字列で保存されているステートを計算直前に数値へ完全パース（空欄の場合は0または1に置換）
+                const parsedTrigger = Number(inventory.trigger) || 0;
+                const parsedCurrentPt = Number(inventory.currentPt) || 0;
+                const parsedSkipFree = Number(inventory.skipFree) || 0;
+                const parsedSkipEvent = Number(inventory.skipEvent) || 0;
+                const parsedBoost = Number(inventory.boost) || 0;
+
+                const parsedWorkManual = Number(lapTimes.work_manual) || 120;
+                const parsedWorkAuto = Number(lapTimes.work_auto) || 150;
+                const parsedTokenManual = Number(lapTimes.token_manual) || 145;
+                const parsedTokenAuto = Number(lapTimes.token_auto) || 150;
+                const parsedEventManual = Number(lapTimes.event_manual) || 150;
+                const parsedEventAuto = Number(lapTimes.event_auto) || 155;
+                const parsedEventSkipManual = Number(lapTimes.event_skip_manual) || 10;
+                const parsedEventSkipAuto = Number(lapTimes.event_skip_auto) || 15;
+
+                // 各30分枠(スロット)単位に展開し、現在時刻からターゲットまでの「未来の有効稼働秒数」を精密集計
+                const futureSlots = [];
+                for (let d = 0; d < 13; d++) {
+                    const dayStart = EVENT_START + d * 24 * 3600 * 1000;
+                    for (let s = 0; s < 48; s++) {
+                        const blockStart = dayStart + s * 1800 * 1000;
+                        const blockEnd = blockStart + 1800 * 1000;
+
+                        if (blockEnd <= activeTime) continue; // 過去スロット
+                        if (blockStart >= targetTime) continue; // ターゲット以降
+
+                        const actualStart = Math.max(blockStart, activeTime);
+                        const actualEnd = Math.min(blockEnd, targetTime);
+                        const overlapSec = Math.max(0, (actualEnd - actualStart) / 1000);
+
+                        if (overlapSec <= 0) continue;
+
+                        const blockMode = schedule[d] ? schedule[d][Math.floor(s / 2)] : 'MANUAL';
+                        futureSlots.push({
+                            day: d,
+                            slot: s,
+                            mode: blockMode,
+                            duration: overlapSec, // 30分枠内で稼働可能な最大秒数
+                            assignedAction: 'IDLE'
+                        });
+                    }
+                }
+
+                let remManualSec = 0;
+                let remAutoSec = 0;
+                futureSlots.forEach(slot => {
+                    if (slot.mode === 'MANUAL') remManualSec += slot.duration;
+                    if (slot.mode === 'AUTO') remAutoSec += slot.duration;
+                });
+
+                // 当日曲の加重平均時間の算出（残りの予定稼働時間に基づく）
+                let weightedSongManual = 0;
+                let weightedSongAuto = 0;
+                let totalActiveSec = 0;
+
+                futureSlots.forEach(slot => {
+                    const songTime = Number(daySongTimes[slot.day]) || 150;
+                    weightedSongManual += songTime * slot.duration;
+                    const autoDiff = Math.max(0, parsedTokenAuto - parsedTokenManual);
+                    weightedSongAuto += (songTime + autoDiff) * slot.duration;
+                    totalActiveSec += slot.duration;
+                });
+
+                const avgSongManual = totalActiveSec > 0 ? (weightedSongManual / totalActiveSec) : parsedTokenManual;
+                const avgSongAuto = totalActiveSec > 0 ? (weightedSongAuto / totalActiveSec) : parsedTokenAuto;
+
+                // 1セット(お仕事 + 当日曲4回)にかかる時間
+                const workScale = isSecondHalf ? (20 / 30) : 1.0;
+                const setTime_M = (parsedWorkManual * workScale) + ((avgSongManual + 15) * 4);
+                const setTime_A = (parsedWorkAuto * workScale) + ((avgSongAuto + 15) * 4);
+
+                const evTime_M = parsedEventManual;
+                const evTime_A = parsedEventAuto;
+                const evTime_Skip_M = parsedEventSkipManual;
+                const evTime_Skip_A = parsedEventSkipAuto;
+
+                // 自然付与される配布トリガー (1日リフレッシュ後等にログイン・おすすめミッションで4000)
+                const daysRemaining = Math.max(0, Math.ceil((targetTime - activeTime) / (1000 * 60 * 60 * 24)));
+                const futureDailyTriggers = daysRemaining * 4000;
+
+                // スキップチケット（手持ち分からのみ計算。自動加算を完全に廃止）
+                const totalSkips = parsedSkipFree + parsedSkipEvent;
+                const skipTriggerCost = totalSkips * 720;
+                const baseTriggers = parsedTrigger + futureDailyTriggers;
+
+                let maxPts = 0;
+                let bestAllocation = { sm: 0, sa: 0, em: 0, ea: 0, skm: 0, ska: 0, success: false };
+
+                // 可能な貯めセット数(N)の全探索により、限界までトリガーを消費できる最高効率の組み合わせを抽出
+                const absoluteMaxSets = Math.floor((remManualSec + remAutoSec) / Math.min(setTime_M, setTime_A));
+
+                for (let nSet = 0; nSet <= Math.min(absoluteMaxSets + 30, 2000); nSet++) {
+                    const generatedTrig = nSet * 4284;
+                    const netTrig = baseTriggers + generatedTrig;
+
+                    // 目標時点でトリガーを「完全に消費しきる（720未満）」ように、イベ通常とスキップを割り当て
+                    const remainingTrigForNormal = netTrig - skipTriggerCost;
+                    let nEv = 0;
+                    let skipsUsed = totalSkips;
+
+                    if (remainingTrigForNormal >= 0) {
+                        nEv = Math.floor(remainingTrigForNormal / 720);
+                    } else {
+                        // チケット数が余るほどのトリガーがない場合、スキップ可能な限界回数に調整
+                        skipsUsed = Math.floor(netTrig / 720);
+                        nEv = 0;
+                    }
+
+                    // このアクションの組み合わせが、手動・オート予定時間内に収まるか分割探索
+                    let foundValidSplit = false;
+                    let bestSm = 0, bestSa = 0, bestEm = 0, bestEa = 0, bestSkm = 0, bestSka = 0;
+
+                    for (let sm = 0; sm <= nSet; sm++) {
+                        const setTimeManUsed = sm * setTime_M;
+                        if (setTimeManUsed > remManualSec) break; // 手動時間枠が不足
+
+                        const remManSec = remManualSec - setTimeManUsed;
+                        const maxSkm = Math.min(skipsUsed, Math.floor(remManSec / evTime_Skip_M));
+                        const skm = maxSkm;
+                        const ska = skipsUsed - skm;
+
+                        const remManSecAfterSkips = remManSec - (skm * evTime_Skip_M);
+                        const maxEmPossible = Math.floor(remManSecAfterSkips / evTime_M);
+                        const em = Math.min(nEv, maxEmPossible);
+
+                        const sa = nSet - sm;
+                        const ea = nEv - em;
+
+                        const autoTimeNeeded = (sa * setTime_A) + (ska * evTime_Skip_A) + (ea * evTime_A);
+                        if (autoTimeNeeded <= remAutoSec) {
+                            foundValidSplit = true;
+                            bestSm = sm;
+                            bestSa = sa;
+                            bestEm = em;
+                            bestEa = ea;
+                            bestSkm = skm;
+                            bestSka = ska;
+                            break;
+                        }
+                    }
+
+                    if (foundValidSplit) {
+                        // トリガー獲得（1pt = 1トリガー） + ライブ吐きクリア（2148pt）
+                        const pts = (nSet * 4284) + ((nEv + skipsUsed) * 2148);
+                        if (pts >= maxPts) {
+                            maxPts = pts;
+                            bestAllocation = {
+                                sm: bestSm,
+                                sa: bestSa,
+                                em: bestEm,
+                                ea: bestEa,
+                                skm: bestSkm,
+                                ska: bestSka,
+                                success: true
+                            };
+                        }
+                    }
+                }
+
+                // ==================== スロット分配(精密秒数充当) ====================
+                const optimalActionSchedule = Array(13).fill(null).map((_, d) => {
+                    return Array(48).fill(null).map((_, s) => {
+                        const mode = schedule[d] ? schedule[d][Math.floor(s / 2)] : 'MANUAL';
+                        if (mode === 'REFRESH') return 'REFRESH';
+                        if (mode === 'NONE') return 'NONE';
+                        return 'IDLE';
+                    });
+                });
+
+                if (bestAllocation.success) {
+                    // 通常時用のソート：当日曲が短い日順（貯め優先）、当日曲が長い日順（吐き優先）
+                    const daysSortedBySongAsc = Array.from({length: 13}, (_, i) => i)
+                        .sort((a, b) => (Number(daySongTimes[a]) || 150) - (Number(daySongTimes[b]) || 150));
+                    const daysSortedBySongDesc = [...daysSortedBySongAsc].reverse();
+
+                    // スキップチケット（手動・オート）の分配用ソート。
+                    // 調整日(Day13(インデックス12) -> Day6(インデックス5))を最優先にし、その他を当日曲の長い順に並べる
+                    const getSkipDayPriority = (day) => {
+                        if (day === 12) return 100; // 最優先 (Day13)
+                        if (day === 5) return 90;   // 二番目 (Day6)
+                        return 0;
+                    };
+
+                    const daysSortedForSkip = Array.from({length: 13}, (_, i) => i)
+                        .sort((a, b) => {
+                            const pA = getSkipDayPriority(a);
+                            const pB = getSkipDayPriority(b);
+                            if (pA !== pB) return pB - pA; // 優先フラグの高い順
+                            // フラグが同一なら、当日曲の長さが長い順（降順）
+                            return (Number(daySongTimes[b]) || 150) - (Number(daySongTimes[a]) || 150);
+                        });
+
+                    // 最適行動（秒数ベース）を切り出して未来スロットに順次充当
+                    let remSmSec = bestAllocation.sm * setTime_M;
+                    let remSaSec = bestAllocation.sa * setTime_A;
+                    let remSkmSec = bestAllocation.skm * evTime_Skip_M;
+                    let remSkaSec = bestAllocation.ska * evTime_Skip_A;
+                    let remEmSec = bestAllocation.em * evTime_M;
+                    let remEaSec = bestAllocation.ea * evTime_A;
+
+                    const slotMap = {};
+                    futureSlots.forEach(slot => {
+                        slotMap[`${slot.day}-${slot.slot}`] = {
+                            slotInfo: slot,
+                            remDuration: slot.duration,
+                            assignedActions: [] // [{actionKey, duration}]
+                        };
+                    });
+
+                    // 1. 手動貯め (sm)：短い順に MANUAL スロットへ充当
+                    for (const d of daysSortedBySongAsc) {
+                        for (let s = 0; s < 48; s++) {
+                            const target = slotMap[`${d}-${s}`];
+                            if (target && target.slotInfo.mode === 'MANUAL' && remSmSec > 0) {
+                                const consume = Math.min(target.remDuration, remSmSec);
+                                target.remDuration -= consume;
+                                remSmSec -= consume;
+                                target.assignedActions.push({ actionKey: 'WORK_TOKEN_M', duration: consume });
+                            }
+                        }
+                    }
+
+                    // 2. オート貯め (sa)：短い順に AUTO スロットへ充当
+                    for (const d of daysSortedBySongAsc) {
+                        for (let s = 0; s < 48; s++) {
+                            const target = slotMap[`${d}-${s}`];
+                            if (target && target.slotInfo.mode === 'AUTO' && remSaSec > 0) {
+                                const consume = Math.min(target.remDuration, remSaSec);
+                                target.remDuration -= consume;
+                                remSaSec -= consume;
+                                target.assignedActions.push({ actionKey: 'WORK_TOKEN_A', duration: consume });
+                            }
+                        }
+                    }
+
+                    // 3. 手動スキップ (skm)：Day13 ➔ Day6 ➔ 長い日の優先順に MANUAL スロットへ最優先充当
+                    for (const d of daysSortedForSkip) {
+                        for (let s = 0; s < 48; s++) {
+                            const target = slotMap[`${d}-${s}`];
+                            if (target && target.slotInfo.mode === 'MANUAL' && target.remDuration > 0 && remSkmSec > 0) {
+                                const consume = Math.min(target.remDuration, remSkmSec);
+                                target.remDuration -= consume;
+                                remSkmSec -= consume;
+                                target.assignedActions.push({ actionKey: 'EVENT_SKIP_M', duration: consume });
+                            }
+                        }
+                    }
+
+                    // 4. 手動通常吐き (em)：スキップの余剰枠に、長い順に MANUAL スロットへ充当
+                    for (const d of daysSortedBySongDesc) {
+                        for (let s = 0; s < 48; s++) {
+                            const target = slotMap[`${d}-${s}`];
+                            if (target && target.slotInfo.mode === 'MANUAL' && target.remDuration > 0 && remEmSec > 0) {
+                                const consume = Math.min(target.remDuration, remEmSec);
+                                target.remDuration -= consume;
+                                remEmSec -= consume;
+                                target.assignedActions.push({ actionKey: 'EVENT_PLAY_M', duration: consume });
+                            }
+                        }
+                    }
+
+                    // 5. オートスキップ (ska)：Day13 ➔ Day6 ➔ 長い日の優先順に AUTO スロットへ最優先充当
+                    for (const d of daysSortedForSkip) {
+                        for (let s = 0; s < 48; s++) {
+                            const target = slotMap[`${d}-${s}`];
+                            if (target && target.slotInfo.mode === 'AUTO' && target.remDuration > 0 && remSkaSec > 0) {
+                                const consume = Math.min(target.remDuration, remSkaSec);
+                                target.remDuration -= consume;
+                                remSkaSec -= consume;
+                                target.assignedActions.push({ actionKey: 'EVENT_SKIP_A', duration: consume });
+                            }
+                        }
+                    }
+
+                    // 6. オート通常吐き (ea)：スキップの余剰枠に、長い順に AUTO スロットへ充当
+                    for (const d of daysSortedBySongDesc) {
+                        for (let s = 0; s < 48; s++) {
+                            const target = slotMap[`${d}-${s}`];
+                            if (target && target.slotInfo.mode === 'AUTO' && target.remDuration > 0 && remEaSec > 0) {
+                                const consume = Math.min(target.remDuration, remEaSec);
+                                target.remDuration -= consume;
+                                remEaSec -= consume;
+                                target.assignedActions.push({ actionKey: 'EVENT_PLAY_A', duration: consume });
+                            }
+                        }
+                    }
+
+                    // タイムライン構築：最長消費時間のアクションを30分表示に採用
+                    const getBestActionForSlot = (d, s) => {
+                        const target = slotMap[`${d}-${s}`];
+                        if (!target || target.assignedActions.length === 0) return 'IDLE';
+                        target.assignedActions.sort((a, b) => b.duration - a.duration);
+                        return target.assignedActions[0].actionKey;
+                    };
+
+                    for (let d = 0; d < 13; d++) {
+                        for (let s = 0; s < 48; s++) {
+                            const mode = schedule[d] ? schedule[d][Math.floor(s / 2)] : 'MANUAL';
+                            if (mode === 'REFRESH') {
+                                optimalActionSchedule[d][s] = 'REFRESH';
+                            } else if (mode === 'NONE') {
+                                optimalActionSchedule[d][s] = 'NONE';
+                            } else {
+                                optimalActionSchedule[d][s] = getBestActionForSlot(d, s);
+                            }
+                        }
+                    }
+                }
+
+                // ==================== タイムライン推移トレース ====================
+                let runningPt = parsedCurrentPt;
+                let runningTrigger = parsedTrigger;
+                let runningSkipFree = parsedSkipFree;
+                let runningSkipEvent = parsedSkipEvent;
+                let runningBoostItems = parsedBoost;
+                let boostActiveCount = 0;
+
+                const timeline = [];
+
+                for (let d = 0; d < 13; d++) {
+                    const isDaySecondHalf = (EVENT_START + d * 24 * 3600 * 1000) > HALFWAY_END;
+                    const dayWorkScale = isDaySecondHalf ? (20 / 30) : 1.0;
+                    
+                    const songTime = Number(daySongTimes[d]) || 150;
+                    const setTime_M_d = (parsedWorkManual * dayWorkScale) + ((songTime + 15) * 4);
+                    const setTime_A_d = (parsedWorkAuto * dayWorkScale) + (((songTime + Math.max(0, parsedTokenAuto - parsedTokenManual)) + 15) * 4);
+
+                    for (let s = 0; s < 48; s++) {
+                        const blockStart = EVENT_START + d * 24 * 3600 * 1000 + s * 1800 * 1000;
+                        const blockEnd = blockStart + 1800 * 1000;
+                        const isPast = activeTime >= blockEnd;
+
+                        if (s === 0) {
+                            runningSkipFree = inventory.isPremiumPass ? 6 : 0;
+                        }
+
+                        // リフレッシュ終了判定時にブースト獲得、ログイン4000トリガー付与
+                        if (s > 0) {
+                            const prevMode = schedule[d] ? schedule[d][Math.floor((s - 1) / 2)] : 'MANUAL';
+                            const currMode = schedule[d] ? schedule[d][Math.floor(s / 2)] : 'MANUAL';
+                            if (prevMode === 'REFRESH' && currMode !== 'REFRESH') {
+                                runningBoostItems = Math.min(2, runningBoostItems + 1);
+                                runningTrigger += 4000;
+                            }
+                        } else if (d > 0) {
+                            const prevMode = schedule[d - 1] ? schedule[d - 1][23] : 'MANUAL';
+                            const currMode = schedule[d] ? schedule[d][0] : 'MANUAL';
+                            if (prevMode === 'REFRESH' && currMode !== 'REFRESH') {
+                                runningBoostItems = Math.min(2, runningBoostItems + 1);
+                                runningTrigger += 4000;
+                            }
+                        }
+
+                        let actionLabel = "リフレッシュ";
+                        let deltaPt = 0;
+                        let deltaTrig = 0;
+                        
+                        const actionKey = (optimalActionSchedule[d] && optimalActionSchedule[d][s]) || 'IDLE';
+
+                        if (actionKey === 'WORK_TOKEN_M') {
+                            const N = 1800 / setTime_M_d;
+                            deltaTrig = N * 4284;
+                            deltaPt = N * 4284;
+                            actionLabel = "手動貯め(Work+当日x4)";
+                        } else if (actionKey === 'WORK_TOKEN_A') {
+                            const N = 1800 / setTime_A_d;
+                            deltaTrig = N * 4284;
+                            deltaPt = N * 4284;
+                            actionLabel = "オート貯め(Work+当日x4)";
+                        } else if (actionKey === 'EVENT_PLAY_M') {
+                            const M = 1800 / parsedEventManual;
+                            const C = Math.min(Math.floor(runningTrigger / 720), M);
+                            deltaTrig = -C * 720;
+                            
+                            let pts = 0;
+                            let remC = C;
+                            while (remC > 0) {
+                                if (boostActiveCount === 0 && runningBoostItems > 0) {
+                                    runningBoostItems--;
+                                    boostActiveCount = 10;
+                                }
+                                if (boostActiveCount > 0) {
+                                    const bPlays = Math.min(remC, boostActiveCount);
+                                    pts += bPlays * 4296; // ブースト2倍: 4296pt
+                                    boostActiveCount -= bPlays;
+                                    remC -= bPlays;
+                                } else {
+                                    pts += remC * 2148;
+                                    remC = 0;
+                                }
+                            }
+                            deltaPt = pts;
+                            actionLabel = C > 0 ? `通常手動吐き (${Math.round(C)}周)` : "調整・待機";
+                        } else if (actionKey === 'EVENT_PLAY_A') {
+                            const M = 1800 / parsedEventAuto;
+                            const C = Math.min(Math.floor(runningTrigger / 720), M);
+                            deltaTrig = -C * 720;
+                            
+                            let pts = 0;
+                            let remC = C;
+                            while (remC > 0) {
+                                if (boostActiveCount === 0 && runningBoostItems > 0) {
+                                    runningBoostItems--;
+                                    boostActiveCount = 10;
+                                }
+                                if (boostActiveCount > 0) {
+                                    const bPlays = Math.min(remC, boostActiveCount);
+                                    pts += bPlays * 4296;
+                                    boostActiveCount -= bPlays;
+                                    remC -= bPlays;
+                                } else {
+                                    pts += remC * 2148;
+                                    remC = 0;
+                                }
+                            }
+                            deltaPt = pts;
+                            actionLabel = C > 0 ? `通常オート吐き (${Math.round(C)}周)` : "調整・待機";
+                        } else if (actionKey === 'EVENT_SKIP_M') {
+                            const M = 1800 / parsedEventSkipManual;
+                            const T = runningSkipFree + runningSkipEvent;
+                            const C = Math.min(T, Math.floor(runningTrigger / 720), M);
+                            
+                            let remC = C;
+                            const freeUsed = Math.min(remC, runningSkipFree);
+                            runningSkipFree -= freeUsed;
+                            remC -= freeUsed;
+                            runningSkipEvent -= remC;
+
+                            deltaTrig = -C * 720;
+                            deltaPt = C * 2148;
+                            actionLabel = C > 0 ? `手動スキップ (${Math.round(C)}枚)` : "調整・待機";
+                        } else if (actionKey === 'EVENT_SKIP_A') {
+                            const M = 1800 / parsedEventSkipAuto;
+                            const T = runningSkipFree + runningSkipEvent;
+                            const C = Math.min(T, Math.floor(runningTrigger / 720), M);
+                            
+                            let remC = C;
+                            const freeUsed = Math.min(remC, runningSkipFree);
+                            runningSkipFree -= freeUsed;
+                            remC -= freeUsed;
+                            runningSkipEvent -= remC;
+
+                            deltaTrig = -C * 720;
+                            deltaPt = C * 2148;
+                            actionLabel = C > 0 ? `オートスキップ (${Math.round(C)}枚)` : "調整・待機";
+                        } else if (actionKey === 'NONE') {
+                            actionLabel = "稼働不可";
+                        } else if (actionKey === 'REFRESH') {
+                            actionLabel = "リフレッシュ";
+                        } else {
+                            actionLabel = "調整・待機";
+                        }
+
+                        runningPt += deltaPt;
+                        runningTrigger += deltaTrig;
+
+                        timeline.push({
+                            day: d,
+                            slot: s,
+                            timeLabel: `${String(Math.floor(s / 2)).padStart(2, '0')}:${s % 2 === 0 ? '00' : '30'}`,
+                            pt: Math.round(runningPt),
+                            trigger: Math.max(0, Math.round(runningTrigger)),
+                            actionLabel,
+                            isPast,
+                            actionKey
+                        });
+                    }
+                }
+
+                return {
+                    remManualSec,
+                    remAutoSec,
+                    avgSongManual,
+                    avgSongAuto,
+                    bestAllocation,
+                    maxPts,
+                    optimalActionSchedule,
+                    timeline
+                };
+            };
+
+            const simData = runSimulation();
+            const alloc = simData.bestAllocation;
+            const currentDayTimeline = simData.timeline.filter(t => t.day === selectedDayIndex);
+
+            return (
+                <div className="min-h-screen p-4 md:p-6 flex flex-col gap-6 max-w-7xl mx-auto">
+                    
+                    {/* Header Bar */}
+                    <header className="glass-panel p-5 rounded-2xl shadow-2xl flex flex-col lg:flex-row justify-between items-center gap-4 neon-border-orange">
+                        <div>
+                            <div className="flex items-center gap-3">
+                                <span className="bg-gradient-to-r from-orange-500 to-pink-500 text-[10px] font-extrabold px-3 py-1 rounded-full text-white tracking-widest uppercase">ver2</span>
+                                <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-pink-500 to-indigo-400">
+                                    ミリシタ周年イベラン支援ナビ
+                                </h1>
+                            </div>
+                            <p className="text-xs text-slate-400 mt-1">
+                                スキップ・ブースト・端末差ラップ対応 逆算スケジューラー
+                            </p>
+                        </div>
+
+                        {/* Event Time Controller */}
+                        <div className="flex flex-col items-end gap-2 w-full lg:w-1/2">
+                            <div className="flex justify-between w-full text-xs font-bold text-slate-300">
+                                <span className="flex items-center gap-1.5">
+                                    <span className={`w-2.5 h-2.5 rounded-full ${isSecondHalf ? 'bg-indigo-400 animate-pulse' : 'bg-emerald-400 animate-pulse'}`}></span>
+                                    {isSecondHalf ? '後半戦 (お仕事3倍消費中)' : '前半戦 (お仕事2倍消費中)'}
+                                </span>
+                                <span className="text-pink-400">{calculateProgress()}% 消化済</span>
+                            </div>
+                            <div className="w-full bg-slate-900 rounded-full h-3 overflow-hidden p-[2px] border border-slate-800">
+                                <div 
+                                    className="bg-gradient-to-r from-pink-500 via-purple-500 to-indigo-500 h-1.5 progress-bar-stripes rounded-full transition-all duration-300"
+                                    style={{ width: `${calculateProgress()}%` }}
+                                ></div>
+                            </div>
+
+                            {/* 時刻ソースコントローラー */}
+                            <div className="flex items-center gap-2 mt-1 w-full justify-between sm:justify-end text-xs">
+                                <span className="text-slate-400">現在時間ソース:</span>
+                                <div className="flex bg-slate-900 rounded p-0.5 border border-slate-800">
+                                    <button 
+                                        onClick={() => setTimeSource('REAL')} 
+                                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${timeSource === 'REAL' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                                    >
+                                        現実時間
+                                    </button>
+                                    <button 
+                                        onClick={() => setTimeSource('VIRTUAL')} 
+                                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${timeSource === 'VIRTUAL' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                                    >
+                                        デバッグ仮想
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Virtual Time Slider Section */}
+                    {timeSource === 'VIRTUAL' && (
+                        <div className="glass-panel p-4 rounded-xl border border-dashed border-orange-500/30 flex flex-col gap-2">
+                            <div className="flex justify-between text-xs font-bold">
+                                <span className="text-orange-400">🕰️ 仮想イベント時刻スライダー</span>
+                                <span className="text-white font-mono">{new Date(virtualTime).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</span>
+                            </div>
+                            <input 
+                                type="range" 
+                                min={EVENT_START} 
+                                max={EVENT_END} 
+                                step={1800000} // 30分ステップ
+                                value={virtualTime} 
+                                onChange={(e) => setVirtualTime(Number(e.target.value))}
+                                className="w-full h-2 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                            />
+                            <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                                <span>Day1 (6/30 0:00)</span>
+                                <span>Day6 (後半切替 7/6 23:59)</span>
+                                <span>Day13 (最終 7/12 23:59)</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Notification Toast */}
+                    {alert && (
+                        <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-50 px-6 py-3 rounded-lg shadow-2xl border flex items-center gap-3 transition-all duration-300 ${alert.type === 'success' ? 'bg-emerald-950/90 border-emerald-500 text-emerald-200' : 'bg-rose-950/90 border-rose-500 text-rose-200'}`}>
+                            <i className={alert.type === 'success' ? 'fa-solid fa-circle-check text-lg text-emerald-400' : 'fa-solid fa-triangle-exclamation text-lg text-rose-400'}></i>
+                            <span className="text-xs font-bold">{alert.text}</span>
+                        </div>
+                    )}
+
+                    {/* Windows Stack */}
+                    <main className="flex flex-col gap-6">
+
+                        {/* SECTION 1: 現在の物資ステータス */}
+                        <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-orange flex flex-col gap-4">
+                            <h2 className="text-sm font-extrabold text-orange-400 flex items-center gap-2 tracking-wider">
+                                <i className="fa-solid fa-boxes-stacked"></i>
+                                <span>現在の獲得・所持資源ステータス（入力時に一桁目が消去可能です）</span>
+                            </h2>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                    <label className="block text-[11px] text-slate-400 font-bold mb-1">現在の累積獲得pt</label>
+                                    <input 
+                                        type="number" 
+                                        value={inventory.currentPt}
+                                        onChange={(e) => handleInventoryChange('currentPt', e.target.value)}
+                                        placeholder="0"
+                                        className="w-full bg-transparent text-xl font-bold font-mono text-yellow-400 text-right outline-none"
+                                    />
+                                </div>
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                    <label className="block text-[11px] text-slate-400 font-bold mb-1">所持トリガー数</label>
+                                    <input 
+                                        type="number" 
+                                        value={inventory.trigger}
+                                        onChange={(e) => handleInventoryChange('trigger', e.target.value)}
+                                        placeholder="0"
+                                        className="w-full bg-transparent text-xl font-bold font-mono text-white text-right outline-none"
+                                    />
+                                </div>
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex flex-col gap-1.5">
+                                    <label className="block text-[11px] text-slate-400 font-bold">ブースト保有数 (Max 2)</label>
+                                    <div className="flex items-center gap-2">
+                                        <input 
+                                            type="number" 
+                                            max="2"
+                                            value={inventory.boost}
+                                            onChange={(e) => handleInventoryChange('boost', e.target.value)}
+                                            placeholder="0"
+                                            className={`w-14 bg-transparent font-bold font-mono text-lg text-center border rounded ${Number(inventory.boost) >= 2 ? 'border-red-500 text-red-400 bg-red-950/20' : 'border-slate-800 text-pink-400'}`}
+                                        />
+                                        <span className="text-[10px] text-slate-400 leading-tight">
+                                            {Number(inventory.boost) >= 2 ? '⚠️溢れ防止警告！リフレッシュ前に消化推奨' : 'リフレッシュ終了で+1'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                    <div>
+                                        <span className="text-[11px] text-slate-400 block font-bold">プレミアムパスDX+</span>
+                                        <span className="text-[10px] text-slate-500">無償スキップが毎日6枚配布</span>
+                                    </div>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={inventory.isPremiumPass}
+                                        onChange={(e) => setInventory(p => ({ ...p, isPremiumPass: e.target.checked }))}
+                                        className="w-4 h-4 rounded border-slate-700 text-orange-500 focus:ring-orange-500 focus:ring-offset-slate-900 bg-slate-900"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* スキップチケット詳細内訳 (手持ちのみからシミュレート) */}
+                            <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800/80 flex flex-col gap-3">
+                                <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                                    <i className="fa-solid fa-ticket text-indigo-400"></i>
+                                    <span>スキップチケット保有枠 (追加獲得分はご自身でここに手動加算してください)</span>
+                                </span>
+                                <div className="grid grid-cols-2 gap-3 text-center">
+                                    <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+                                        <label className="block text-[10px] text-slate-400 mb-0.5">当日無償(本日限り有効・プレミアムパス時)</label>
+                                        <input 
+                                            type="number" 
+                                            value={inventory.skipFree}
+                                            onChange={(e) => handleInventoryChange('skipFree', e.target.value)}
+                                            placeholder="0"
+                                            className="w-full bg-transparent text-center font-bold font-mono text-indigo-400 outline-none"
+                                        />
+                                    </div>
+                                    <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+                                        <label className="block text-[10px] text-slate-400 mb-0.5">イベント限定チケット(累積手持ち数)</label>
+                                        <input 
+                                            type="number" 
+                                            value={inventory.skipEvent}
+                                            onChange={(e) => handleInventoryChange('skipEvent', e.target.value)}
+                                            placeholder="0"
+                                            className="w-full bg-transparent text-center font-bold font-mono text-indigo-400 outline-none"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        {/* SECTION 2: セット＆ラップタイム自動計測 (ストップウォッチ) */}
+                        <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-cyan flex flex-col gap-4">
+                            <div className="flex justify-between items-center">
+                                <h2 className="text-sm font-extrabold text-cyan-400 flex items-center gap-2 tracking-wider">
+                                    <i className="fa-solid fa-stopwatch"></i>
+                                    <span>ラップタイム自動計測 ＆ 端末ロス統計同期</span>
+                                </h2>
+                                {(setTracking.state !== 'IDLE' || eventTracking.state !== 'IDLE') && (
+                                    <button onClick={cancelTracking} className="text-xs bg-rose-950/80 border border-rose-500/40 text-rose-300 px-3 py-1 rounded-lg">
+                                        計測を中断
+                                    </button>
+                                )}
+                            </div>
+                            <p className="text-xs text-slate-400 leading-relaxed">
+                                お仕事開始から当日曲を1セット(4回)クリアするまでのトータルロスを直接実測し、あなた独自のラップをリアルタイム反映します。
+                            </p>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                                {/* お仕事〜当日曲セット計測 */}
+                                <div className="lg:col-span-5 bg-slate-900/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between gap-3">
+                                    <div>
+                                        <span className="text-xs font-bold text-slate-300 block mb-1">お仕事 ➔ 当日曲 連続セット計測</span>
+                                        <span className="text-[10px] text-slate-500">お仕事開始時に「計測開始」➔ 当日曲開始時に「当日曲へ」➔ 曲終了で「完了」</span>
+                                    </div>
+
+                                    {setTracking.state === 'IDLE' ? (
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button 
+                                                onClick={() => startSetTracking(true)}
+                                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-xs transition"
+                                            >
+                                                手動セット計測
+                                            </button>
+                                            <button 
+                                                onClick={() => startSetTracking(false)}
+                                                className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 rounded text-xs transition"
+                                            >
+                                                オートセット計測
+                                            </button>
+                                        </div>
+                                    ) : (setTracking.state === 'WORKING_M' || setTracking.state === 'WORKING_A') ? (
+                                        <button 
+                                            onClick={transitToToken}
+                                            className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded text-xs transition animate-pulse"
+                                        >
+                                            お仕事完了 ➔ 当日曲(1曲目)プレイ開始
+                                        </button>
+                                    ) : (
+                                        <button 
+                                            onClick={finishSetTracking}
+                                            className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 rounded text-xs transition animate-pulse"
+                                        >
+                                            当日曲完了・確定
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* イベント曲計測 */}
+                                <div className="lg:col-span-4 bg-slate-900/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between gap-3">
+                                    <div>
+                                        <span className="text-xs font-bold text-slate-300 block mb-1">イベント曲 / スキップ計測</span>
+                                        <span className="text-[10px] text-slate-500">曲開始タップで「開始」➔ 暗転・終了で「確定」</span>
+                                    </div>
+
+                                    {eventTracking.state === 'IDLE' ? (
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button onClick={() => startEventTracking(false, true)} className="bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-bold py-1.5 rounded">通常(手動)</button>
+                                            <button onClick={() => startEventTracking(false, false)} className="bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-bold py-1.5 rounded">通常(オート)</button>
+                                            <button onClick={() => startEventTracking(true, true)} className="bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-bold py-1.5 rounded">スキップ(手動)</button>
+                                            <button onClick={() => startEventTracking(true, false)} className="bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-bold py-1.5 rounded">スキップ(オート)</button>
+                                        </div>
+                                    ) : (
+                                        <button 
+                                            onClick={finishEventTracking}
+                                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded text-xs transition animate-pulse"
+                                        >
+                                            プレイ完了・確定
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* 実効秒数管理 */}
+                                <div className="lg:col-span-3 bg-slate-900/40 p-3 rounded-xl border border-slate-800 flex flex-col gap-2">
+                                    <span className="text-[11px] font-bold text-slate-400">適用中のラップ設定(秒)</span>
+                                    <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                                        <div className="flex flex-col">
+                                            <span className="text-slate-500">お仕事(手動)</span>
+                                            <input type="number" value={lapTimes.work_manual} onChange={(e) => handleLapTimeChange('work_manual', e.target.value)} className="bg-slate-950 border border-slate-800 rounded p-1 text-center font-bold text-emerald-400 outline-none" />
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-slate-500">お仕事(オート)</span>
+                                            <input type="number" value={lapTimes.work_auto} onChange={(e) => handleLapTimeChange('work_auto', e.target.value)} className="bg-slate-950 border border-slate-800 rounded p-1 text-center font-bold text-cyan-400 outline-none" />
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-slate-500">イベ曲(手動)</span>
+                                            <input type="number" value={lapTimes.event_manual} onChange={(e) => handleLapTimeChange('event_manual', e.target.value)} className="bg-slate-950 border border-slate-800 rounded p-1 text-center font-bold text-emerald-400 outline-none" />
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-slate-500">イベ曲(オート)</span>
+                                            <input type="number" value={lapTimes.event_auto} onChange={(e) => handleLapTimeChange('event_auto', e.target.value)} className="bg-slate-950 border border-slate-800 rounded p-1 text-center font-bold text-cyan-400 outline-none" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        {/* SECTION 3: 13日間・各日の当日曲の長さ設定 */}
+                        <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-pink flex flex-col gap-3">
+                            <div className="flex justify-between items-center">
+                                <h2 className="text-sm font-extrabold text-pink-400 flex items-center gap-2 tracking-wider">
+                                    <i className="fa-solid fa-music"></i>
+                                    <span>13日間・各日当日曲の長さ(秒)設定</span>
+                                </h2>
+                                <span className="text-[10px] text-slate-500">短い日に「貯め」、長い日に「吐き」を狙うのがセオリー</span>
+                            </div>
+                            
+                            <div className="grid grid-cols-4 sm:grid-cols-7 lg:grid-cols-13 gap-2">
+                                {daySongTimes.map((sec, dIdx) => {
+                                    const isHalfEnd = dIdx === 5;
+                                    const isLastDay = dIdx === 12;
+                                    const dateLabel = dIdx + 30 <= 30 ? `6/${dIdx + 30}` : `7/${dIdx - 0}`;
+                                    
+                                    return (
+                                        <div 
+                                            key={dIdx} 
+                                            className={`bg-slate-950 p-2 rounded-lg border text-center flex flex-col gap-1 transition ${isHalfEnd ? 'border-amber-500/40 bg-amber-950/10' : isLastDay ? 'border-red-500/40 bg-red-950/10' : 'border-slate-800'}`}
+                                        >
+                                            <span className="text-[9px] font-extrabold text-slate-400 block leading-tight">
+                                                D{dIdx + 1}
+                                                <span className="text-[8px] font-normal block font-mono text-slate-500">{dateLabel}</span>
+                                            </span>
+                                            <input 
+                                                type="number" 
+                                                value={sec}
+                                                onChange={(e) => handleDaySongTimeChange(dIdx, e.target.value)}
+                                                className="w-full bg-slate-900 border border-slate-800 rounded text-center text-xs font-mono font-bold text-pink-300 py-0.5 outline-none"
+                                            />
+                                            {(isHalfEnd || isLastDay) && (
+                                                <span className="text-[7px] text-yellow-500 font-bold tracking-tighter leading-none block">調整日</span>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </section>
+
+                        {/* SECTION 4: スケジュール設定 ＆ カレンダー */}
+                        <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-cyan flex flex-col gap-4">
+                            
+                            {/* 統合Day切り替えタブ */}
+                            <div>
+                                <span className="text-xs font-bold text-indigo-400 block mb-2 tracking-wide uppercase">
+                                    <i className="fa-solid fa-calendar-days mr-1.5"></i>
+                                    対象Day切り替え（カレンダー設定＆下部タイムラインが連動）
+                                </span>
+                                <div className="flex gap-1.5 overflow-x-auto pb-2 border-b border-slate-800/80 no-scrollbar">
+                                    {Array(13).fill(null).map((_, idx) => {
+                                        const dateLabel = idx + 30 <= 30 ? `6/${idx + 30}` : `7/${idx - 0}`;
+                                        const isSelected = selectedDayIndex === idx;
+
+                                        return (
+                                            <button
+                                                key={idx}
+                                                onClick={() => setSelectedDayIndex(idx)}
+                                                className={`px-3 py-2 rounded-xl text-xs font-extrabold transition-all flex-shrink-0 flex flex-col items-center gap-0.5 ${isSelected ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-lg shadow-indigo-950/50 scale-105' : 'bg-slate-900 hover:bg-slate-800 text-slate-400'}`}
+                                            >
+                                                <span>Day {idx + 1}</span>
+                                                <span className="text-[8px] opacity-75 font-mono">{dateLabel}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* リフレッシュ自動設定（連続 8 時間自動フィル）機能 */}
+                            <div className="bg-purple-950/20 border border-purple-500/30 p-4 rounded-xl flex flex-col gap-3">
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                                    <div className="flex items-center gap-2">
+                                        <span className="bg-purple-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">自動フィル搭載</span>
+                                        <h3 className="text-xs font-extrabold text-purple-300">Day {selectedDayIndex + 1} リフレッシュ開始時刻設定</h3>
+                                    </div>
+                                    <span className="text-[10px] text-purple-200/70">選択した時間から自動で連続8時間「リフレッシュ」としてロックされます（翌日への跨ぎ対応）</span>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-3">
+                                    <label className="text-xs text-slate-300 font-bold">リフレッシュ開始時間:</label>
+                                    <select
+                                        value={refreshStarts[selectedDayIndex]}
+                                        onChange={(e) => handleRefreshStartChange(selectedDayIndex, e.target.value)}
+                                        className="bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-xs text-white outline-none font-bold"
+                                    >
+                                        <option value="NONE">設定なし (リフレッシュ稼働なし・最終日等)</option>
+                                        {Array(24).fill(null).map((_, h) => (
+                                            <option key={h} value={String(h)}>{h}:00 から連続8時間</option>
+                                        ))}
+                                    </select>
+                                    <div className="text-[10px] text-slate-400 leading-normal flex-1">
+                                        {refreshStarts[selectedDayIndex] !== 'NONE' ? (
+                                            <span className="text-purple-400 font-bold">
+                                                ⏱️ REFRESH枠: {refreshStarts[selectedDayIndex]}:00 〜 { (Number(refreshStarts[selectedDayIndex]) + 8) % 24 }:00 {Number(refreshStarts[selectedDayIndex]) + 8 > 24 && '(翌日跨ぎ)'}
+                                            </span>
+                                        ) : '現在この日のリフレッシュはありません。'}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                                <div>
+                                    <h3 className="text-sm font-extrabold text-cyan-400 flex items-center gap-1.5">
+                                        <i className="fa-solid fa-clock-rotate-left"></i>
+                                        <span>Day {selectedDayIndex + 1} 稼働状況設定（1時間単位・24ブロック・リフレッシュを除く）</span>
+                                    </h3>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">
+                                        リフレッシュ期間は自動で「リフレッシュ」に固定されます。それ以外の時間帯の周回方針を選択してください。
+                                    </p>
+                                </div>
+                                <div className="flex gap-1">
+                                    {Object.keys(MODES).filter(k => k !== 'REFRESH').map(key => (
+                                        <button
+                                            key={key}
+                                            onClick={() => handleBulkSetDay(selectedDayIndex, key)}
+                                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${MODES[key].color} text-slate-950 hover:opacity-90`}
+                                        >
+                                            一括:{MODES[key].label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* 1 時間刻みのスケジュール指定ブロック */}
+                            <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800/80 flex flex-col gap-4">
+                                
+                                {/* 0:00 〜 12:00 */}
+                                <div>
+                                    <span className="text-[9px] text-slate-500 font-black block mb-2 tracking-widest uppercase">AM (00:00 - 12:00)</span>
+                                    <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-12 gap-2">
+                                        {schedule[selectedDayIndex].slice(0, 12).map((modeKey, idx) => {
+                                            const sIdx = idx;
+                                            const blockStart = EVENT_START + selectedDayIndex * 24 * 3600 * 1000 + sIdx * 3600 * 1000;
+                                            const blockEnd = blockStart + 3600 * 1000;
+                                            const isPast = activeTime >= blockEnd;
+                                            const isRefresh = modeKey === 'REFRESH';
+                                            const mode = MODES[modeKey];
+
+                                            return (
+                                                <div 
+                                                    key={sIdx}
+                                                    className={`flex flex-col p-1.5 rounded-lg border transition ${isPast ? 'bg-slate-900/10 border-slate-950/40 opacity-40' : isRefresh ? 'bg-purple-950/15 border-purple-900/40' : 'bg-slate-900 border-slate-800 hover:border-slate-700'}`}
+                                                >
+                                                    <span className="text-[9px] font-mono font-bold text-slate-400 text-center mb-1">
+                                                        {String(sIdx).padStart(2, '0')}:00
+                                                    </span>
+                                                    {isRefresh ? (
+                                                        <div className="text-[10px] py-1 bg-purple-600 text-slate-950 rounded font-black text-center select-none" title="リフレッシュ枠(自動固定)">
+                                                            リフ
+                                                        </div>
+                                                    ) : (
+                                                        <select
+                                                            disabled={isPast}
+                                                            value={modeKey}
+                                                            onChange={(e) => handleBlockChange(selectedDayIndex, sIdx, e.target.value)}
+                                                            className={`w-full text-[10px] p-1 font-black rounded border text-center outline-none cursor-pointer ${mode.color} ${mode.border} text-slate-950`}
+                                                        >
+                                                            {Object.keys(MODES).filter(k => k !== 'REFRESH').map(k => (
+                                                                <option key={k} value={k} className="bg-slate-950 text-slate-200">
+                                                                    {MODES[k].label.slice(0,2)}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* 12:00 〜 24:00 */}
+                                <div>
+                                    <span className="text-[9px] text-slate-500 font-black block mb-2 tracking-widest uppercase">PM (12:00 - 24:00)</span>
+                                    <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-12 gap-2">
+                                        {schedule[selectedDayIndex].slice(12, 24).map((modeKey, idx) => {
+                                            const sIdx = idx + 12;
+                                            const blockStart = EVENT_START + selectedDayIndex * 24 * 3600 * 1000 + sIdx * 3600 * 1000;
+                                            const blockEnd = blockStart + 3600 * 1000;
+                                            const isPast = activeTime >= blockEnd;
+                                            const isRefresh = modeKey === 'REFRESH';
+                                            const mode = MODES[modeKey];
+
+                                            return (
+                                                <div 
+                                                    key={sIdx}
+                                                    className={`flex flex-col p-1.5 rounded-lg border transition ${isPast ? 'bg-slate-900/10 border-slate-950/40 opacity-40' : isRefresh ? 'bg-purple-950/15 border-purple-900/40' : 'bg-slate-900 border-slate-800 hover:border-slate-700'}`}
+                                                >
+                                                    <span className="text-[9px] font-mono font-bold text-slate-400 text-center mb-1">
+                                                        {String(sIdx).padStart(2, '0')}:00
+                                                    </span>
+                                                    {isRefresh ? (
+                                                        <div className="text-[10px] py-1 bg-purple-600 text-slate-950 rounded font-black text-center select-none" title="リフレッシュ枠(自動固定)">
+                                                            リフ
+                                                        </div>
+                                                    ) : (
+                                                        <select
+                                                            disabled={isPast}
+                                                            value={modeKey}
+                                                            onChange={(e) => handleBlockChange(selectedDayIndex, sIdx, e.target.value)}
+                                                            className={`w-full text-[10px] p-1 font-black rounded border text-center outline-none cursor-pointer ${mode.color} ${mode.border} text-slate-950`}
+                                                        >
+                                                            {Object.keys(MODES).filter(k => k !== 'REFRESH').map(k => (
+                                                                <option key={k} value={k} className="bg-slate-950 text-slate-200">
+                                                                    {MODES[k].label.slice(0,2)}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                            </div>
+
+                            {/* リフレッシュ設定に対するガイダンス */}
+                            <div className="bg-purple-950/20 border border-purple-500/30 p-3 rounded-xl flex items-start gap-2.5 text-xs text-purple-200">
+                                <i className="fa-solid fa-lightbulb text-purple-400 mt-0.5"></i>
+                                <div>
+                                    <span className="font-bold block">💡 リフレッシュ設定最適化ガイダンス</span>
+                                    <p className="leading-relaxed mt-0.5 text-[11px] text-slate-300">
+                                        日付跨ぎのログインロスや新ガシャ等の通信演出ロス(約5分)を回避するため、<span className="text-purple-300 font-bold">17時〜翌1時などの日付跨ぎ時間枠</span>に設定するのが最善手です。
+                                        リフレッシュ時間中は獲得ptが0になりますが、おすすめ楽曲のプレイ（ログインボーナス4000トリガー獲得ミッション）は実行可能です。
+                                    </p>
+                                </div>
+                            </div>
+                        </section>
+
+                        {/* SECTION 5: 30分詳細タイムライン推移シート */}
+                        <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-pink flex flex-col gap-4">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                                <div>
+                                    <h2 className="text-sm font-extrabold text-pink-400 flex items-center gap-2 tracking-wider">
+                                        <i className="fa-solid fa-chart-line"></i>
+                                        <span>Day {selectedDayIndex + 1} 精密シミュレーション・タイムライン (30分刻み)</span>
+                                    </h2>
+                                    <p className="text-[10px] text-slate-500">カレンダーに連動した、トリガー数および累積獲得ptの30分推移予測</p>
+                                </div>
+
+                                {/* シミュレーションターゲット */}
+                                <div className="flex items-center gap-2 text-xs">
+                                    <span className="text-slate-400 font-bold">逆算目標フェーズ:</span>
+                                    <select 
+                                        value={optimizationTarget} 
+                                        onChange={(e) => setOptimizationTarget(e.target.value)}
+                                        className="bg-slate-900 border border-slate-800 rounded px-3 py-1 font-bold text-pink-400 outline-none"
+                                    >
+                                        <option value="AUTO">現在フェーズ終了まで</option>
+                                        <option value="HALFWAY">前半戦終了 (Day6)</option>
+                                        <option value="END">イベント最終終了 (Day13)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="max-h-[440px] overflow-y-auto rounded-xl border border-slate-800 no-scrollbar">
+                                <table className="w-full text-left border-collapse">
+                                    <thead className="sticky top-0 bg-slate-950 border-b border-slate-800 text-[11px] font-bold text-slate-400">
+                                        <tr>
+                                            <th className="p-3 text-center w-24">時刻</th>
+                                            <th className="p-3 text-right">累積予測 pt</th>
+                                            <th className="p-3 text-right">累積予測 トリガー</th>
+                                            <th className="p-3 pl-8">シミュレート動き</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-800/50 font-mono text-xs">
+                                        {currentDayTimeline.map((item, idx) => {
+                                            const actionInfo = ACTIONS[item.actionKey] || ACTIONS.IDLE;
+                                            return (
+                                                <tr 
+                                                    key={idx} 
+                                                    className={`transition ${item.isPast ? 'bg-slate-950/40 text-slate-600 opacity-45' : 'hover:bg-slate-900/30 text-slate-200'}`}
+                                                >
+                                                    <td className="p-3 text-center font-bold">{item.timeLabel}</td>
+                                                    <td className="p-3 text-right text-yellow-400/95 font-bold">
+                                                        {item.pt.toLocaleString()}
+                                                    </td>
+                                                    <td className="p-3 text-right text-cyan-400/95 font-bold">
+                                                        {item.trigger.toLocaleString()}
+                                                    </td>
+                                                    <td className="p-3 pl-8">
+                                                        <div className="flex items-center gap-2">
+                                                            <i className={`${actionInfo.icon} ${actionInfo.color.replace('bg-', 'text-')} text-[10px]`}></i>
+                                                            <span className="font-bold text-[11px]">{item.actionLabel}</span>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        {/* SECTION 6: 最適化アロケーション 逆算サマリー */}
+                        <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-orange flex flex-col gap-4">
+                            <h2 className="text-sm font-extrabold text-orange-400 flex items-center gap-2 tracking-wider">
+                                <i className="fa-solid fa-calculator"></i>
+                                <span>逆算最適化アロケーション計画 ({targetName}時点)</span>
+                            </h2>
+                            <p className="text-xs text-slate-400 leading-relaxed">
+                                入力されたラップタイム、当日曲時間、各日スケジュール、および残りの物資から、目標終了時にぴったりトリガーをゼロにするための自動分配計画です。
+                            </p>
+
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-center">
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                    <span className="text-[10px] text-slate-500 block font-bold mb-1">予定手動稼働時間</span>
+                                    <span className="text-lg font-mono font-bold text-emerald-400">
+                                        {Math.floor(simData.remManualSec / 3600)}時間 {Math.floor((simData.remManualSec % 3600) / 60)}分
+                                    </span>
+                                </div>
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                    <span className="text-[10px] text-slate-500 block font-bold mb-1">予定オート稼働時間</span>
+                                    <span className="text-lg font-mono font-bold text-cyan-400">
+                                        {Math.floor(simData.remAutoSec / 3600)}時間 {Math.floor((simData.remAutoSec % 3600) / 60)}分
+                                    </span>
+                                </div>
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                    <span className="text-[10px] text-slate-500 block font-bold mb-1">獲得予測pt増分</span>
+                                    <span className="text-lg font-mono font-bold text-yellow-400">
+                                        +{simData.maxPts.toLocaleString()} pt
+                                    </span>
+                                </div>
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex flex-col justify-center">
+                                    <span className="text-[10px] text-slate-500 block font-bold">適合ステータス</span>
+                                    <span className={`text-md font-extrabold mt-0.5 ${alloc.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {alloc.success ? '✓ トリガー全消費・適合成功' : '⚠️ 稼働時間不足'}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {alloc.success ? (
+                                <div className="flex flex-col gap-4">
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                                        <div className="bg-slate-900 p-2.5 rounded-lg border border-emerald-500/10">
+                                            <span className="text-[10px] text-emerald-400 font-bold block mb-1">手動貯め(セット)</span>
+                                            <span className="text-xl font-bold font-mono text-white">{alloc.sm}</span>
+                                            <span className="text-[8px] text-slate-500 block mt-0.5">※お仕事 + 当日曲4回分</span>
+                                        </div>
+                                        <div className="bg-slate-900 p-2.5 rounded-lg border border-cyan-500/10">
+                                            <span className="text-[10px] text-cyan-400 font-bold block mb-1">オート貯め(セット)</span>
+                                            <span className="text-xl font-bold font-mono text-white">{alloc.sa}</span>
+                                            <span className="text-[8px] text-slate-500 block mt-0.5">※お仕事 + 当日曲4回分</span>
+                                        </div>
+                                        <div className="bg-slate-900 p-2.5 rounded-lg border border-emerald-500/10">
+                                            <span className="text-[10px] text-pink-400 font-bold block mb-1">手動通常イベ曲</span>
+                                            <span className="text-xl font-bold font-mono text-white">{alloc.em}</span>
+                                            <span className="text-[8px] text-slate-500 block mt-0.5">※トリガー720個消費</span>
+                                        </div>
+                                        <div className="bg-slate-900 p-2.5 rounded-lg border border-cyan-500/10">
+                                            <span className="text-[10px] text-purple-400 font-bold block mb-1">オート通常イベ曲</span>
+                                            <span className="text-xl font-bold font-mono text-white">{alloc.ea}</span>
+                                            <span className="text-[8px] text-slate-500 block mt-0.5">※トリガー720個消費</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-center">
+                                        <div className="bg-slate-900 p-2.5 rounded-lg border border-fuchsia-500/10 flex justify-between items-center px-4">
+                                            <span className="text-[11px] text-fuchsia-400 font-bold">手動スキップチケット消費</span>
+                                            <span className="text-base font-bold font-mono text-white">{alloc.skm} 回</span>
+                                        </div>
+                                        <div className="bg-slate-900 p-2.5 rounded-lg border border-indigo-500/10 flex justify-between items-center px-4">
+                                            <span className="text-[11px] text-indigo-400 font-bold">オートスキップチケット消費</span>
+                                            <span className="text-base font-bold font-mono text-white">{alloc.ska} 回</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-emerald-950/20 border border-emerald-500/20 p-3.5 rounded-xl text-xs text-slate-300 leading-relaxed">
+                                        <span className="font-extrabold text-emerald-400 block mb-1">💡 最適イベラン動作アドバイス</span>
+                                        本システムは「当日曲の時間が最も短い日」を手動/オート問わず最も適した<span className="text-emerald-300">貯め日</span>として優先的にスケジュールを組み立てます。
+                                        また、<span className="text-purple-400 font-bold">前半最終日（Day 6）</span>と<span className="text-red-400 font-bold">イベント最終日（Day 13）</span>の有効な稼働枠にはスキップチケットが最優先で集中的に割り振られます。これにより、最終日にトリガーをピッタリかつ超高速で吐ききり、時間調整を安全に行う戦略を正確にサポートします。
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="bg-rose-950/25 border border-rose-500/20 p-4 rounded-xl text-xs text-rose-300 leading-relaxed">
+                                    ⚠️ スケジュール上の未来の稼働時間が極端に不足しているか、消化しきれない量のトリガーを抱えているため、最適解が抽出できません。
+                                    カレンダー設定で「手動周回」や「完全オート」の時間スロット枠を増加させるか、リフレッシュや稼働不可時間を再確認してください。
+                                </div>
+                            )}
+                        </section>
+
+                    </main>
+
+                    {/* Footer Credits */}
+                    <footer className="text-center py-4 text-[10px] text-slate-600 font-mono tracking-wider">
+                        MILLION LIVE ANNIVERSARY EVENT RUNNER ASSISTANT
+                    </footer>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
