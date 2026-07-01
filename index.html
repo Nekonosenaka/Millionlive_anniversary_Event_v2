@@ -52,7 +52,7 @@
         // ユーザーがマニュアル割当可能な稼働モード
         const MODES = {
             MANUAL: { label: "手動周回", color: "bg-emerald-500", border: "border-emerald-500/30", text: "text-emerald-400", desc: "集中プレイ（最速）" },
-            AUTO: { label: "完全オート", color: "bg-cyan-500", border: "border-cyan-500/30", text: "text-cyan-400", desc: "お仕事・裏作業用" },
+            AUTO: { label: "オート周回", color: "bg-cyan-500", border: "border-cyan-500/30", text: "text-cyan-400", desc: "お仕事・裏作業用" },
             NONE: { label: "稼働不可", color: "bg-slate-700", border: "border-slate-700/30", text: "text-slate-400", desc: "睡眠・離席" },
             REFRESH: { label: "リフレッシュ", color: "bg-purple-600", border: "border-purple-600/30", text: "text-purple-400", desc: "1日8時間・自動オーバーレイ" }
         };
@@ -964,6 +964,7 @@
                     <main className="flex flex-col gap-6">
 
                         {/* SECTION 1: 現在の物資ステータス */}
+                        {}
                         <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-orange flex flex-col gap-4">
                             <h2 className="text-sm font-extrabold text-orange-400 flex items-center gap-2 tracking-wider">
                                 <i className="fa-solid fa-boxes-stacked"></i>
@@ -1020,7 +1021,7 @@
                                 </div>
                             </div>
 
-                            {/* スキップチケット詳細内訳 (手持ちのみからシミュレート) */}
+                            {/* スキップチケット詳細内訳 */}
                             <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800/80 flex flex-col gap-3">
                                 <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
                                     <i className="fa-solid fa-ticket text-indigo-400"></i>
@@ -1051,12 +1052,13 @@
                             </div>
                         </section>
 
-                        {/* SECTION 2: セット＆ラップタイム自動計測 (ストップウォッチ) */}
+                        {/* SECTION 2: セット＆ラップタイム自動計測 & 手動入力 */}
+                        {}
                         <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-cyan flex flex-col gap-4">
                             <div className="flex justify-between items-center">
                                 <h2 className="text-sm font-extrabold text-cyan-400 flex items-center gap-2 tracking-wider">
                                     <i className="fa-solid fa-stopwatch"></i>
-                                    <span>ラップタイム自動計測 ＆ 端末ロス統計同期</span>
+                                    <span>セット＆ラップタイム実測コントロール ＆ 直接手動調整</span>
                                 </h2>
                                 {(setTracking.state !== 'IDLE' || eventTracking.state !== 'IDLE') && (
                                     <button onClick={cancelTracking} className="text-xs bg-rose-950/80 border border-rose-500/40 text-rose-300 px-3 py-1 rounded-lg">
@@ -1065,92 +1067,159 @@
                                 )}
                             </div>
                             <p className="text-xs text-slate-400 leading-relaxed">
-                                お仕事開始から当日曲を1セット(4回)クリアするまでのトータルロスを直接実測し、あなた独自のラップをリアルタイム反映します。
+                                お仕事開始から当日曲を1セット完了するまでの実測、または手動でのタイム入力（秒）に対応しています。
                             </p>
 
-                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                                {/* お仕事〜当日曲セット計測 */}
-                                <div className="lg:col-span-5 bg-slate-900/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between gap-3">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {/* 左側：お仕事〜当日曲セット計測＆直接入力 */}
+                                <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
                                     <div>
-                                        <span className="text-xs font-bold text-slate-300 block mb-1">お仕事 ➔ 当日曲 連続セット計測</span>
-                                        <span className="text-[10px] text-slate-500">お仕事開始時に「計測開始」➔ 当日曲開始時に「当日曲へ」➔ 曲終了で「完了」</span>
+                                        <span className="text-xs font-bold text-slate-200 block mb-1">🔄 お仕事 ➔ 当日曲 連続セット計測 ＆ ラップ直接調整</span>
+                                        <span className="text-[10px] text-slate-500 block mb-3">
+                                            ボタンで実測するか、下の入力欄に秒数を直接打ち込んで即時反映できます。
+                                        </span>
                                     </div>
 
-                                    {setTracking.state === 'IDLE' ? (
-                                        <div className="grid grid-cols-2 gap-2">
+                                    {/* 計測用ボタンエリア */}
+                                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+                                        {setTracking.state === 'IDLE' ? (
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <button 
+                                                    onClick={() => startSetTracking(true)}
+                                                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 rounded text-xs transition"
+                                                >
+                                                    手動セット計測開始
+                                                </button>
+                                                <button 
+                                                    onClick={() => startSetTracking(false)}
+                                                    className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-1.5 rounded text-xs transition"
+                                                >
+                                                    オートセット計測開始
+                                                </button>
+                                            </div>
+                                        ) : (setTracking.state === 'WORKING_M' || setTracking.state === 'WORKING_A') ? (
                                             <button 
-                                                onClick={() => startSetTracking(true)}
-                                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-xs transition"
+                                                onClick={transitToToken}
+                                                className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded text-xs transition animate-pulse"
                                             >
-                                                手動セット計測
+                                                お仕事完了 ➔ 当日曲(1曲目)プレイ開始
                                             </button>
+                                        ) : (
                                             <button 
-                                                onClick={() => startSetTracking(false)}
-                                                className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 rounded text-xs transition"
+                                                onClick={finishSetTracking}
+                                                className="w-full bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 rounded text-xs transition animate-pulse"
                                             >
-                                                オートセット計測
+                                                当日曲完了・測定ラップを確定反映
                                             </button>
-                                        </div>
-                                    ) : (setTracking.state === 'WORKING_M' || setTracking.state === 'WORKING_A') ? (
-                                        <button 
-                                            onClick={transitToToken}
-                                            className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded text-xs transition animate-pulse"
-                                        >
-                                            お仕事完了 ➔ 当日曲(1曲目)プレイ開始
-                                        </button>
-                                    ) : (
-                                        <button 
-                                            onClick={finishSetTracking}
-                                            className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 rounded text-xs transition animate-pulse"
-                                        >
-                                            当日曲完了・確定
-                                        </button>
-                                    )}
-                                </div>
-
-                                {/* イベント曲計測 */}
-                                <div className="lg:col-span-4 bg-slate-900/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between gap-3">
-                                    <div>
-                                        <span className="text-xs font-bold text-slate-300 block mb-1">イベント曲 / スキップ計測</span>
-                                        <span className="text-[10px] text-slate-500">曲開始タップで「開始」➔ 暗転・終了で「確定」</span>
+                                        )}
                                     </div>
 
-                                    {eventTracking.state === 'IDLE' ? (
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <button onClick={() => startEventTracking(false, true)} className="bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-bold py-1.5 rounded">通常(手動)</button>
-                                            <button onClick={() => startEventTracking(false, false)} className="bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-bold py-1.5 rounded">通常(オート)</button>
-                                            <button onClick={() => startEventTracking(true, true)} className="bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-bold py-1.5 rounded">スキップ(手動)</button>
-                                            <button onClick={() => startEventTracking(true, false)} className="bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-bold py-1.5 rounded">スキップ(オート)</button>
+                                    {/* 直接入力エリア（お仕事 ＆ 当日曲） */}
+                                    <div className="grid grid-cols-2 gap-3 mt-1">
+                                        <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 flex flex-col gap-1">
+                                            <span className="text-[10px] text-emerald-400 font-bold">お仕事(手動秒数)</span>
+                                            <input 
+                                                type="number" 
+                                                value={lapTimes.work_manual} 
+                                                onChange={(e) => handleLapTimeChange('work_manual', e.target.value)} 
+                                                className="bg-slate-900 border border-slate-800 rounded p-1 text-center font-bold text-xs text-white outline-none focus:border-emerald-500"
+                                            />
                                         </div>
-                                    ) : (
-                                        <button 
-                                            onClick={finishEventTracking}
-                                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded text-xs transition animate-pulse"
-                                        >
-                                            プレイ完了・確定
-                                        </button>
-                                    )}
+                                        <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 flex flex-col gap-1">
+                                            <span className="text-[10px] text-cyan-400 font-bold">お仕事(オート秒数)</span>
+                                            <input 
+                                                type="number" 
+                                                value={lapTimes.work_auto} 
+                                                onChange={(e) => handleLapTimeChange('work_auto', e.target.value)} 
+                                                className="bg-slate-900 border border-slate-800 rounded p-1 text-center font-bold text-xs text-white outline-none focus:border-cyan-500"
+                                            />
+                                        </div>
+                                        <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 flex flex-col gap-1">
+                                            <span className="text-[10px] text-emerald-400 font-bold">当日曲(手動秒数)</span>
+                                            <input 
+                                                type="number" 
+                                                value={lapTimes.token_manual} 
+                                                onChange={(e) => handleLapTimeChange('token_manual', e.target.value)} 
+                                                className="bg-slate-900 border border-slate-800 rounded p-1 text-center font-bold text-xs text-white outline-none focus:border-emerald-500"
+                                            />
+                                        </div>
+                                        <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 flex flex-col gap-1">
+                                            <span className="text-[10px] text-cyan-400 font-bold">当日曲(オート秒数)</span>
+                                            <input 
+                                                type="number" 
+                                                value={lapTimes.token_auto} 
+                                                onChange={(e) => handleLapTimeChange('token_auto', e.target.value)} 
+                                                className="bg-slate-900 border border-slate-800 rounded p-1 text-center font-bold text-xs text-white outline-none focus:border-cyan-500"
+                                            />
+                                        </div>
+                                    </div>
                                 </div>
 
-                                {/* 実効秒数管理 */}
-                                <div className="lg:col-span-3 bg-slate-900/40 p-3 rounded-xl border border-slate-800 flex flex-col gap-2">
-                                    <span className="text-[11px] font-bold text-slate-400">適用中のラップ設定(秒)</span>
-                                    <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
-                                        <div className="flex flex-col">
-                                            <span className="text-slate-500">お仕事(手動)</span>
-                                            <input type="number" value={lapTimes.work_manual} onChange={(e) => handleLapTimeChange('work_manual', e.target.value)} className="bg-slate-950 border border-slate-800 rounded p-1 text-center font-bold text-emerald-400 outline-none" />
+                                {/* 右側：イベント曲計測＆直接入力 */}
+                                <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex flex-col justify-between gap-4">
+                                    <div>
+                                        <span className="text-xs font-bold text-slate-200 block mb-1">🎸 イベント曲 / スキップ計測 ＆ ラップ直接調整</span>
+                                        <span className="text-[10px] text-slate-500 block mb-3">
+                                            通常イベ曲・スキップそれぞれの実測および手動秒数調整エリアです。
+                                        </span>
+                                    </div>
+
+                                    {/* 計測用ボタンエリア */}
+                                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+                                        {eventTracking.state === 'IDLE' ? (
+                                            <div className="grid grid-cols-4 gap-1">
+                                                <button onClick={() => startEventTracking(false, true)} className="bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-bold py-1.5 rounded transition">通常手動</button>
+                                                <button onClick={() => startEventTracking(false, false)} className="bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-bold py-1.5 rounded transition">通常オート</button>
+                                                <button onClick={() => startEventTracking(true, true)} className="bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-bold py-1.5 rounded transition">スキップ手動</button>
+                                                <button onClick={() => startEventTracking(true, false)} className="bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-bold py-1.5 rounded transition">スキップオート</button>
+                                            </div>
+                                        ) : (
+                                            <button 
+                                                onClick={finishEventTracking}
+                                                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded text-xs transition animate-pulse"
+                                            >
+                                                プレイ完了・ラップタイムを反映確定
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {/* 直接入力エリア（イベント通常 ＆ スキップ） */}
+                                    <div className="grid grid-cols-2 gap-3 mt-1">
+                                        <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 flex flex-col gap-1">
+                                            <span className="text-[10px] text-emerald-400 font-bold">イベ曲通常(手動秒数)</span>
+                                            <input 
+                                                type="number" 
+                                                value={lapTimes.event_manual} 
+                                                onChange={(e) => handleLapTimeChange('event_manual', e.target.value)} 
+                                                className="bg-slate-900 border border-slate-800 rounded p-1 text-center font-bold text-xs text-white outline-none focus:border-emerald-500"
+                                            />
                                         </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-slate-500">お仕事(オート)</span>
-                                            <input type="number" value={lapTimes.work_auto} onChange={(e) => handleLapTimeChange('work_auto', e.target.value)} className="bg-slate-950 border border-slate-800 rounded p-1 text-center font-bold text-cyan-400 outline-none" />
+                                        <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 flex flex-col gap-1">
+                                            <span className="text-[10px] text-cyan-400 font-bold">イベ曲通常(オート秒数)</span>
+                                            <input 
+                                                type="number" 
+                                                value={lapTimes.event_auto} 
+                                                onChange={(e) => handleLapTimeChange('event_auto', e.target.value)} 
+                                                className="bg-slate-900 border border-slate-800 rounded p-1 text-center font-bold text-xs text-white outline-none focus:border-cyan-500"
+                                            />
                                         </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-slate-500">イベ曲(手動)</span>
-                                            <input type="number" value={lapTimes.event_manual} onChange={(e) => handleLapTimeChange('event_manual', e.target.value)} className="bg-slate-950 border border-slate-800 rounded p-1 text-center font-bold text-emerald-400 outline-none" />
+                                        <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 flex flex-col gap-1">
+                                            <span className="text-[10px] text-emerald-400 font-bold">スキップイベ(手動秒数)</span>
+                                            <input 
+                                                type="number" 
+                                                value={lapTimes.event_skip_manual} 
+                                                onChange={(e) => handleLapTimeChange('event_skip_manual', e.target.value)} 
+                                                className="bg-slate-900 border border-slate-800 rounded p-1 text-center font-bold text-xs text-white outline-none focus:border-emerald-500"
+                                            />
                                         </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-slate-500">イベ曲(オート)</span>
-                                            <input type="number" value={lapTimes.event_auto} onChange={(e) => handleLapTimeChange('event_auto', e.target.value)} className="bg-slate-950 border border-slate-800 rounded p-1 text-center font-bold text-cyan-400 outline-none" />
+                                        <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 flex flex-col gap-1">
+                                            <span className="text-[10px] text-cyan-400 font-bold">スキップイベ(オート秒数)</span>
+                                            <input 
+                                                type="number" 
+                                                value={lapTimes.event_skip_auto} 
+                                                onChange={(e) => handleLapTimeChange('event_skip_auto', e.target.value)} 
+                                                className="bg-slate-900 border border-slate-800 rounded p-1 text-center font-bold text-xs text-white outline-none focus:border-cyan-500"
+                                            />
                                         </div>
                                     </div>
                                 </div>
@@ -1158,6 +1227,7 @@
                         </section>
 
                         {/* SECTION 3: 13日間・各日の当日曲の長さ設定 */}
+                        {}
                         <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-pink flex flex-col gap-3">
                             <div className="flex justify-between items-center">
                                 <h2 className="text-sm font-extrabold text-pink-400 flex items-center gap-2 tracking-wider">
@@ -1198,6 +1268,7 @@
                         </section>
 
                         {/* SECTION 4: スケジュール設定 ＆ カレンダー */}
+                        {}
                         <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-cyan flex flex-col gap-4">
                             
                             {/* 統合Day切り替えタブ */}
@@ -1256,7 +1327,7 @@
                                 </div>
                             </div>
 
-                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                                 <div>
                                     <h3 className="text-sm font-extrabold text-cyan-400 flex items-center gap-1.5">
                                         <i className="fa-solid fa-clock-rotate-left"></i>
@@ -1266,16 +1337,37 @@
                                         リフレッシュ期間は自動で「リフレッシュ」に固定されます。それ以外の時間帯の周回方針を選択してください。
                                     </p>
                                 </div>
-                                <div className="flex gap-1">
-                                    {Object.keys(MODES).filter(k => k !== 'REFRESH').map(key => (
-                                        <button
-                                            key={key}
-                                            onClick={() => handleBulkSetDay(selectedDayIndex, key)}
-                                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${MODES[key].color} text-slate-950 hover:opacity-90`}
-                                        >
-                                            一括:{MODES[key].label}
-                                        </button>
-                                    ))}
+                                <div className="flex flex-col sm:flex-row items-start sm:items-center lg:items-end gap-3 self-stretch lg:self-auto">
+                                    {/* 右上色別凡例 */}
+                                    <div className="flex flex-wrap gap-2.5 text-[11px] bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-800/80">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                                            <span className="text-slate-300 font-bold">手動周回</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-full bg-cyan-500"></span>
+                                            <span className="text-slate-300 font-bold">オート周回</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-full bg-slate-700"></span>
+                                            <span className="text-slate-300 font-bold">稼働不可</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-full bg-purple-600"></span>
+                                            <span className="text-slate-300 font-bold">リフレッシュ</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-1">
+                                        {Object.keys(MODES).filter(k => k !== 'REFRESH').map(key => (
+                                            <button
+                                                key={key}
+                                                onClick={() => handleBulkSetDay(selectedDayIndex, key)}
+                                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${MODES[key].color} text-slate-950 hover:opacity-90`}
+                                            >
+                                                一括:{MODES[key].label.replace('周回', '')}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
 
@@ -1386,6 +1478,7 @@
                         </section>
 
                         {/* SECTION 5: 30分詳細タイムライン推移シート */}
+                        {}
                         <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-pink flex flex-col gap-4">
                             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                                 <div>
@@ -1451,6 +1544,7 @@
                         </section>
 
                         {/* SECTION 6: 最適化アロケーション 逆算サマリー */}
+                        {}
                         <section className="glass-panel p-5 rounded-2xl shadow-xl neon-border-orange flex flex-col gap-4">
                             <h2 className="text-sm font-extrabold text-orange-400 flex items-center gap-2 tracking-wider">
                                 <i className="fa-solid fa-calculator"></i>
@@ -1541,7 +1635,7 @@
 
                     {/* Footer Credits */}
                     <footer className="text-center py-4 text-[10px] text-slate-600 font-mono tracking-wider">
-                        MILLION LIVE ANNIVERSARY EVENT RUNNER ASSISTANT
+                        MILLION LIVE ANNIVERSARY EVENT RUNNER ASSISTANT PRO © 2026
                     </footer>
                 </div>
             );
